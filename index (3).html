@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Miesten Superpesis 2026 – Otteluohjelma</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: Arial, sans-serif;
+    font-size: 13px;
+    background: #f4f4f4;
+    color: #222;
+    padding: 20px;
+  }
+
+  h1 {
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 6px;
+    color: #1F4E79;
+  }
+
+  .legend {
+    font-size: 12px;
+    color: #555;
+    margin-bottom: 16px;
+  }
+  .legend span {
+    display: inline-block;
+    margin-right: 16px;
+  }
+  .legend .bold-example { font-weight: 700; }
+
+  .table-wrapper { overflow-x: auto; }
+
+  table {
+    border-collapse: collapse;
+    background: #fff;
+    min-width: 100%;
+  }
+
+  th, td {
+    border: 1px solid #ccc;
+    padding: 5px 8px;
+    text-align: center;
+    white-space: nowrap;
+  }
+
+  th {
+    background: #1F4E79;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  th:nth-child(1), th:nth-child(2) {
+    position: sticky;
+    z-index: 2;
+    background: #1F4E79;
+  }
+  th:nth-child(1) { left: 0; }
+  th:nth-child(2) { position: sticky; box-shadow: 2px 0 4px rgba(0,0,0,0.10); }
+
+  td.team-name {
+    background: #D6E4F0;
+    font-weight: 700;
+    text-align: left;
+    color: #1F4E79;
+    position: sticky;
+    left: 0;
+    z-index: 1;
+  }
+
+  td.games-left {
+    background: #D6E4F0;
+    font-weight: 700;
+    color: #1F4E79;
+    text-align: center;
+    position: sticky;
+    z-index: 1;
+    box-shadow: 2px 0 4px rgba(0,0,0,0.10);
+  }
+
+  tr:nth-child(even) td { background: #EBF5FB; }
+  tr:nth-child(even) td.team-name,
+  tr:nth-child(even) td.games-left { background: #D6E4F0; }
+
+  td.home { font-weight: 700; }
+  td.away { font-weight: 400; }
+  td.empty { color: #ccc; }
+
+  #status {
+    margin-bottom: 12px;
+    font-size: 13px;
+    color: #555;
+  }
+
+  @media print {
+    body { padding: 0; background: #fff; }
+    h1 { font-size: 14px; }
+    th, td { font-size: 9px; padding: 3px 4px; }
+    .legend { font-size: 9px; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Miesten Superpesis 2026 – Otteluohjelma</h1>
+<div class="legend">
+  <span><span class="bold-example">Lihavoitu</span> = kotipeli</span>
+  <span>Normaali = vieraspeli</span>
+</div>
+
+<div id="status">Ladataan otteluohjelmaa...</div>
+<div class="table-wrapper">
+  <table id="schedule-table"></table>
+</div>
+
+<script>
+const URL = "https://api.pesistulokset.fi/api/v1/public/matches-list?seasonSeriesId=2945&apikey=wRX0tTke3DZ8RLKAMntjZ81LwgNQuSN9";
+const EXCLUDE = new Set(["Itä, miehet", "Länsi, miehet"]);
+const CUTOFF_DATE = "2026-06-18";
+
+fetch(URL)
+  .then(r => r.json())
+  .then(data => {
+    const allMatches = [];
+    for (const group of data[0].groups) {
+      allMatches.push(...group.matches);
+    }
+
+    const parseDate = m => m.date.slice(0, 10);
+
+    // Today's date in Finland (UTC+3 during summer)
+    const now = new Date();
+    const finlandOffset = 3 * 60;
+    const localOffset = now.getTimezoneOffset();
+    const finlandNow = new Date(now.getTime() + (finlandOffset + localOffset) * 60000);
+    const todayStr = finlandNow.toISOString().slice(0, 10);
+
+    // Filter matches: not before today, not after cutoff
+    const filteredMatches = allMatches.filter(m => {
+      const d = parseDate(m);
+      return d >= todayStr && d <= CUTOFF_DATE;
+    });
+
+    const uniqueDates = [...new Set(filteredMatches.map(parseDate))].sort();
+    const dateToRound = Object.fromEntries(uniqueDates.map((d, i) => [d, i + 1]));
+
+    const teams = new Map();  // shorthand -> full name
+    const schedule = {};      // shorthand -> { round: { opponent, isHome } }
+    const gamesLeft = {};     // shorthand -> count
+
+    for (const match of filteredMatches) {
+      const homeName = match.home.name;
+      const awayName = match.away.name;
+      if (EXCLUDE.has(homeName) || EXCLUDE.has(awayName)) continue;
+
+      const home = match.home.shorthand;
+      const away = match.away.shorthand;
+      teams.set(home, homeName);
+      teams.set(away, awayName);
+
+      const round = dateToRound[parseDate(match)];
+      if (!schedule[home]) schedule[home] = {};
+      if (!schedule[away]) schedule[away] = {};
+      schedule[home][round] = { opponent: away, isHome: true };
+      schedule[away][round] = { opponent: home, isHome: false };
+
+      gamesLeft[home] = (gamesLeft[home] || 0) + 1;
+      gamesLeft[away] = (gamesLeft[away] || 0) + 1;
+    }
+
+    // Sort teams by games left descending, then alphabetically by full name
+    const sortedTeams = [...teams.entries()].sort((a, b) => {
+      const diff = (gamesLeft[b[0]] || 0) - (gamesLeft[a[0]] || 0);
+      return diff !== 0 ? diff : a[1].localeCompare(b[1], 'fi');
+    });
+
+    const rounds = [...new Set(Object.values(schedule).flatMap(r => Object.keys(r).map(Number)))].sort((a,b)=>a-b);
+
+    const formatDate = d => {
+      const dt = new Date(d + "T12:00:00Z");
+      return `${dt.getUTCDate()}.${dt.getUTCMonth()+1}.`;
+    };
+
+    const table = document.getElementById("schedule-table");
+
+    // Header row
+    const thead = table.createTHead();
+    const headerRow = thead.insertRow();
+    const th0 = document.createElement("th");
+    th0.textContent = "Joukkue";
+    headerRow.appendChild(th0);
+    const thGames = document.createElement("th");
+    thGames.textContent = "Pelejä jäljellä";
+    thGames.title = "Jäljellä olevat pelit (tähän " + formatDate(CUTOFF_DATE) + " asti)";
+    headerRow.appendChild(thGames);
+    for (const round of rounds) {
+      const th = document.createElement("th");
+      th.textContent = formatDate(uniqueDates[round - 1]);
+      headerRow.appendChild(th);
+    }
+
+    // Data rows
+    const tbody = table.createTBody();
+    for (const [shorthand, fullName] of sortedTeams) {
+      const row = tbody.insertRow();
+
+      const td0 = row.insertCell();
+      td0.textContent = shorthand;
+      td0.className = "team-name";
+      td0.title = fullName;
+
+      const tdGames = row.insertCell();
+      tdGames.textContent = gamesLeft[shorthand] || 0;
+      tdGames.className = "games-left";
+
+      for (const round of rounds) {
+        const td = row.insertCell();
+        const entry = schedule[shorthand]?.[round];
+        if (entry) {
+          td.textContent = entry.opponent;
+          td.className = entry.isHome ? "home" : "away";
+          td.title = entry.isHome ? "Kotipeli" : "Vieraspeli";
+        } else {
+          td.className = "empty";
+          td.textContent = "";
+        }
+      }
+    }
+
+    // Set sticky left offset for second column dynamically
+    requestAnimationFrame(() => {
+      const firstTh = table.querySelector('th:nth-child(1)');
+      const offset = firstTh.offsetWidth + 'px';
+      table.querySelectorAll('th:nth-child(2), td.games-left').forEach(el => el.style.left = offset);
+    });
+
+    document.getElementById("status").textContent =
+      `${sortedTeams.length} joukkuetta · näytetään ${formatDate(todayStr)}–${formatDate(CUTOFF_DATE)}`;
+  })
+  .catch(err => {
+    // Set sticky left offset for second column dynamically
+    requestAnimationFrame(() => {
+      const firstTh = table.querySelector('th:nth-child(1)');
+      const offset = firstTh.offsetWidth + 'px';
+      table.querySelectorAll('th:nth-child(2), td.games-left').forEach(el => el.style.left = offset);
+    });
+
+    document.getElementById("status").textContent = "Virhe ladattaessa tietoja: " + err.message;
+  });
+</script>
+</body>
+</html>
