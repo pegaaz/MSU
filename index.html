@@ -31,13 +31,9 @@
     display: inline-block;
     margin-right: 16px;
   }
-  .legend .bold-example {
-    font-weight: 700;
-  }
+  .legend .bold-example { font-weight: 700; }
 
-  .table-wrapper {
-    overflow-x: auto;
-  }
+  .table-wrapper { overflow-x: auto; }
 
   table {
     border-collapse: collapse;
@@ -59,15 +55,37 @@
     font-weight: 700;
   }
 
+  th:nth-child(1), th:nth-child(2) {
+    position: sticky;
+    z-index: 2;
+    background: #1F4E79;
+  }
+  th:nth-child(1) { left: 0; }
+  th:nth-child(2) { position: sticky; box-shadow: 2px 0 4px rgba(0,0,0,0.10); }
+
   td.team-name {
     background: #D6E4F0;
     font-weight: 700;
     text-align: left;
     color: #1F4E79;
+    position: sticky;
+    left: 0;
+    z-index: 1;
+  }
+
+  td.games-left {
+    background: #D6E4F0;
+    font-weight: 700;
+    color: #1F4E79;
+    text-align: center;
+    position: sticky;
+    z-index: 1;
+    box-shadow: 2px 0 4px rgba(0,0,0,0.10);
   }
 
   tr:nth-child(even) td { background: #EBF5FB; }
-  tr:nth-child(even) td.team-name { background: #D6E4F0; }
+  tr:nth-child(even) td.team-name,
+  tr:nth-child(even) td.games-left { background: #D6E4F0; }
 
   td.home { font-weight: 700; }
   td.away { font-weight: 400; }
@@ -103,6 +121,7 @@
 <script>
 const URL = "https://api.pesistulokset.fi/api/v1/public/matches-list?seasonSeriesId=2945&apikey=wRX0tTke3DZ8RLKAMntjZ81LwgNQuSN9";
 const EXCLUDE = new Set(["Itä, miehet", "Länsi, miehet"]);
+const CUTOFF_DATE = "2026-06-18";
 
 fetch(URL)
   .then(r => r.json())
@@ -113,13 +132,28 @@ fetch(URL)
     }
 
     const parseDate = m => m.date.slice(0, 10);
-    const uniqueDates = [...new Set(allMatches.map(parseDate))].sort();
+
+    // Today's date in Finland (UTC+3 during summer)
+    const now = new Date();
+    const finlandOffset = 3 * 60;
+    const localOffset = now.getTimezoneOffset();
+    const finlandNow = new Date(now.getTime() + (finlandOffset + localOffset) * 60000);
+    const todayStr = finlandNow.toISOString().slice(0, 10);
+
+    // Filter matches: not before today, not after cutoff
+    const filteredMatches = allMatches.filter(m => {
+      const d = parseDate(m);
+      return d >= todayStr && d <= CUTOFF_DATE;
+    });
+
+    const uniqueDates = [...new Set(filteredMatches.map(parseDate))].sort();
     const dateToRound = Object.fromEntries(uniqueDates.map((d, i) => [d, i + 1]));
 
-    const teams = new Map(); // shorthand -> full name
-    const schedule = {};    // shorthand -> { round: { opponent, isHome } }
+    const teams = new Map();  // shorthand -> full name
+    const schedule = {};      // shorthand -> { round: { opponent, isHome } }
+    const gamesLeft = {};     // shorthand -> count
 
-    for (const match of allMatches) {
+    for (const match of filteredMatches) {
       const homeName = match.home.name;
       const awayName = match.away.name;
       if (EXCLUDE.has(homeName) || EXCLUDE.has(awayName)) continue;
@@ -134,15 +168,22 @@ fetch(URL)
       if (!schedule[away]) schedule[away] = {};
       schedule[home][round] = { opponent: away, isHome: true };
       schedule[away][round] = { opponent: home, isHome: false };
+
+      gamesLeft[home] = (gamesLeft[home] || 0) + 1;
+      gamesLeft[away] = (gamesLeft[away] || 0) + 1;
     }
 
-    // Sort teams by full name
-    const sortedTeams = [...teams.entries()].sort((a, b) => a[1].localeCompare(b[1], 'fi'));
+    // Sort teams by games left descending, then alphabetically by full name
+    const sortedTeams = [...teams.entries()].sort((a, b) => {
+      const diff = (gamesLeft[b[0]] || 0) - (gamesLeft[a[0]] || 0);
+      return diff !== 0 ? diff : a[1].localeCompare(b[1], 'fi');
+    });
+
     const rounds = [...new Set(Object.values(schedule).flatMap(r => Object.keys(r).map(Number)))].sort((a,b)=>a-b);
 
     const formatDate = d => {
-      const dt = new Date(d);
-      return `${dt.getDate()}.${dt.getMonth()+1}.`;
+      const dt = new Date(d + "T12:00:00Z");
+      return `${dt.getUTCDate()}.${dt.getUTCMonth()+1}.`;
     };
 
     const table = document.getElementById("schedule-table");
@@ -153,6 +194,10 @@ fetch(URL)
     const th0 = document.createElement("th");
     th0.textContent = "Joukkue";
     headerRow.appendChild(th0);
+    const thGames = document.createElement("th");
+    thGames.textContent = "Pelejä jäljellä";
+    thGames.title = "Jäljellä olevat pelit (tähän " + formatDate(CUTOFF_DATE) + " asti)";
+    headerRow.appendChild(thGames);
     for (const round of rounds) {
       const th = document.createElement("th");
       th.textContent = formatDate(uniqueDates[round - 1]);
@@ -163,10 +208,15 @@ fetch(URL)
     const tbody = table.createTBody();
     for (const [shorthand, fullName] of sortedTeams) {
       const row = tbody.insertRow();
+
       const td0 = row.insertCell();
       td0.textContent = shorthand;
       td0.className = "team-name";
       td0.title = fullName;
+
+      const tdGames = row.insertCell();
+      tdGames.textContent = gamesLeft[shorthand] || 0;
+      tdGames.className = "games-left";
 
       for (const round of rounds) {
         const td = row.insertCell();
@@ -182,10 +232,24 @@ fetch(URL)
       }
     }
 
+    // Set sticky left offset for second column dynamically
+    requestAnimationFrame(() => {
+      const firstTh = table.querySelector('th:nth-child(1)');
+      const offset = firstTh.offsetWidth + 'px';
+      table.querySelectorAll('th:nth-child(2), td.games-left').forEach(el => el.style.left = offset);
+    });
+
     document.getElementById("status").textContent =
-      `${sortedTeams.length} joukkuetta · ${rounds.length} kierrosta`;
+      `${sortedTeams.length} joukkuetta · näytetään ${formatDate(todayStr)}–${formatDate(CUTOFF_DATE)}`;
   })
   .catch(err => {
+    // Set sticky left offset for second column dynamically
+    requestAnimationFrame(() => {
+      const firstTh = table.querySelector('th:nth-child(1)');
+      const offset = firstTh.offsetWidth + 'px';
+      table.querySelectorAll('th:nth-child(2), td.games-left').forEach(el => el.style.left = offset);
+    });
+
     document.getElementById("status").textContent = "Virhe ladattaessa tietoja: " + err.message;
   });
 </script>
